@@ -1,0 +1,42 @@
+{
+  "name": "agenthub",
+  "version": "0.1.0",
+  "description": "Local CLI/TUI for syncing AI-agent instructions, skills, and MCP configuration across providers.",
+  "type": "module",
+  "bin": {
+    "agenthub": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "setup:global": "pnpm build && npm link",
+    "remove:global": "npm unlink -g agenthub",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "packageManager": "pnpm@10.33.2",
+  "dependencies": {
+    "@iarna/toml": "^2.2.5",
+    "chokidar": "^5.0.0",
+    "commander": "^14.0.3",
+    "diff": "^9.0.0",
+    "fs-extra": "^11.3.4",
+    "handlebars": "^4.7.9",
+    "neo-blessed": "^0.2.0",
+    "yaml": "^2.8.3",
+    "zod": "^4.4.1"
+  },
+  "devDependencies": {
+    "@types/blessed": "^0.1.25",
+    "@types/diff": "^7.0.2",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^25.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.15"
+  }
+}
