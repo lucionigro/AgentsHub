@@ -198,6 +198,53 @@ describe("AgentHub integration", () => {
     expect(claude).toContain("Verify release blockers before publishing.");
   });
 
+  it("imports global agents skills used by OpenCode and propagates them into Codex", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "agenthub-"));
+    const root = path.join(tmp, ".agenthub");
+    const workspace = path.join(tmp, "Repository");
+    const globalAgentsSkills = path.join(tmp, ".agents", "skills");
+    const previous = process.env.AGENTHUB_GLOBAL_AGENTS_SKILLS;
+    process.env.AGENTHUB_GLOBAL_AGENTS_SKILLS = globalAgentsSkills;
+
+    try {
+      await fs.ensureDir(workspace);
+      const config = await createSourceTree({ root, workspaceRoot: workspace, providers: ["codex", "opencode"], overwrite: true });
+      config.targets = config.targets.map((target) =>
+        target.scope === "global" ? { ...target, path: path.join(tmp, "global", path.basename(target.path)) } : target
+      );
+
+      await fs.outputFile(
+        path.join(globalAgentsSkills, "gitpr", "SKILL.md"),
+        [
+          "---",
+          "name: Git PR",
+          "description: Imported from the shared agents skill root",
+          "---",
+          "# Git PR",
+          "",
+          "Review pull requests with repository context.",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+
+      await pushConfig(config);
+
+      const importedSkill = await fs.readFile(path.join(root, "skills", "gitpr.md"), "utf8");
+      expect(importedSkill).toContain('agenthub:imported-skill provider="opencode"');
+
+      const agents = await fs.readFile(path.join(workspace, "AGENTS.md"), "utf8");
+      expect(agents).toContain("## Git PR");
+      expect(agents).toContain("Review pull requests with repository context.");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AGENTHUB_GLOBAL_AGENTS_SKILLS;
+      } else {
+        process.env.AGENTHUB_GLOBAL_AGENTS_SKILLS = previous;
+      }
+    }
+  });
+
   it("normalizes provider skill content before rendering sections", () => {
     const normalized = normalizeSkillSectionContent(
       [

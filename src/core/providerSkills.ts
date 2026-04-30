@@ -102,6 +102,7 @@ async function getProviderSkillRootEntries(config: AgentHubConfig): Promise<Prov
   const roots: ProviderSkillRoot[] = [
     { provider: "claude", root: path.join(home, ".claude", "skills") },
     { provider: "codex", root: path.join(home, ".codex", "skills") },
+    { provider: "opencode", root: globalAgentsSkillsRoot() },
     { provider: "opencode", root: path.join(home, ".config", "opencode", "skills") },
   ];
 
@@ -122,6 +123,10 @@ async function getProviderSkillRootEntries(config: AgentHubConfig): Promise<Prov
       seen.add(key);
       return true;
     });
+}
+
+function globalAgentsSkillsRoot(): string {
+  return process.env.AGENTHUB_GLOBAL_AGENTS_SKILLS ?? path.join(os.homedir(), ".agents", "skills");
 }
 
 async function findSkillFiles(root: string): Promise<string[]> {
