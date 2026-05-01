@@ -57,7 +57,7 @@ export function renderOverviewPanel(widget: Widgets.BoxElement, state: Dashboard
     const status = boxedLines("Status", bodyWidth, [
       `${hex("AgentHub", palette.cyan)}  ${statusBadge("PENDING", "warn")}`,
       keyValueLine("Config Path", truncateMiddle(state.configPath, bodyWidth - 18), bodyWidth - 4),
-      keyValueLine("Next Step", "Open Settings to create config", bodyWidth - 4),
+      keyValueLine("Next Step", "Complete guided Settings setup", bodyWidth - 4),
     ]);
     const setup = boxedLines("Settings", bodyWidth, [
       `${hex("6", palette.cyan)}  ${hex("Settings", palette.white)}  ${hex(symbols.arrow, palette.gray)}  ${hex("configure workspace, providers, memory, skills, and MCP", palette.whiteDim)}`,

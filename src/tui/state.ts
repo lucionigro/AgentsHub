@@ -54,6 +54,7 @@ export type DashboardEvent = {
 export type InteractiveViewMode = "browse" | "focus" | "edit";
 
 export type SettingsTextField = "workspaceRoot" | "root" | "memoryDir" | "skillsDir" | "mcpFile";
+export type SettingsEditField = SettingsTextField | "globalMemory";
 
 export type SettingsDraft = {
   workspaceRoot: string;
@@ -63,7 +64,8 @@ export type SettingsDraft = {
   mcpFile: string;
   providers: Record<ProviderId, boolean>;
   writeMode: WriteMode;
-  editingField?: SettingsTextField;
+  globalMemoryContent?: string;
+  editingField?: SettingsEditField;
 };
 
 export type InteractiveState = {
@@ -140,7 +142,7 @@ export function createInitialState(configPath: string): DashboardState {
     status: "not initialized",
     errorCount: 0,
     readinessState: "attention",
-    primaryAction: "Open Settings to configure AgentHub",
+    primaryAction: "Complete guided Settings setup",
     metrics: emptyMetrics(),
     providers: [],
     targets: [],
@@ -172,7 +174,8 @@ export async function loadDashboardSnapshot(configPath: string, previous?: Dashb
       skillFiles: [],
       metrics: emptyMetrics(),
       readinessState: "attention",
-      primaryAction: "Open Settings to configure AgentHub",
+      primaryAction: "Complete guided Settings setup",
+      currentView: state.currentView === "dashboard" ? "settings" : state.currentView,
       events: state.events,
     };
   }

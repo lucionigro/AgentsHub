@@ -4,6 +4,7 @@ import path from "node:path";
 import YAML from "yaml";
 import type { AgentHubConfig, ProviderId } from "../config/schema.js";
 import { resolvePath } from "../config/paths.js";
+import type { SourceSection } from "../providers/types.js";
 
 const importMarker = "<!-- agenthub:imported-skill";
 const ignoredSkillDirs = new Set([".git", ".system", ".tmp", "node_modules", "vendor_imports", "cache", "memories"]);
@@ -20,6 +21,14 @@ export type ProviderSkillImportSummary = {
   updated: number;
   unchanged: number;
   skipped: number;
+  failed: number;
+  warnings: string[];
+};
+
+export type ProviderSkillPreview = {
+  targetPath: string;
+  content: string;
+  section: SourceSection;
 };
 
 type DiscoveredSkill = {
@@ -31,34 +40,95 @@ type DiscoveredSkill = {
   body: string;
 };
 
+type ProviderSkillReadResults = {
+  skills: DiscoveredSkill[];
+  warnings: string[];
+};
+
+type ProviderSkillImportEntry = {
+  skill: DiscoveredSkill;
+  targetPath?: string;
+  content?: string;
+  status: "imported" | "updated" | "unchanged" | "skipped";
+};
+
+type ProviderSkillImportPlan = {
+  entries: ProviderSkillImportEntry[];
+  summary: ProviderSkillImportSummary;
+};
+
 export async function syncProviderSkills(config: AgentHubConfig): Promise<ProviderSkillImportSummary> {
-  const skills = await discoverProviderSkills(config);
-  const summary: ProviderSkillImportSummary = { imported: 0, updated: 0, unchanged: 0, skipped: 0 };
+  const plan = await planProviderSkillImports(config);
   await fs.ensureDir(resolvePath(config.source.skillsDir));
+
+  for (const entry of plan.entries) {
+    if (!entry.targetPath || !entry.content || (entry.status !== "imported" && entry.status !== "updated")) {
+      continue;
+    }
+
+    await fs.outputFile(entry.targetPath, entry.content, "utf8");
+  }
+
+  return plan.summary;
+}
+
+export async function discoverProviderSkills(config: AgentHubConfig): Promise<DiscoveredSkill[]> {
+  return (await discoverProviderSkillResults(config)).skills;
+}
+
+export async function previewProviderSkills(config: AgentHubConfig): Promise<ProviderSkillPreview[]> {
+  const plan = await planProviderSkillImports(config);
+  const root = resolvePath(config.source.root);
+  return plan.entries
+    .filter((entry) => entry.targetPath && entry.content && entry.status !== "skipped")
+    .map((entry) => ({
+      targetPath: entry.targetPath as string,
+      content: entry.content as string,
+      section: {
+        title: entry.skill.title,
+        path: path.relative(root, entry.targetPath as string),
+        content: normalizeSkillSectionContent(entry.content as string),
+        kind: "skill"
+      }
+    }));
+}
+
+export async function previewProviderSkillImportSummary(config: AgentHubConfig): Promise<ProviderSkillImportSummary> {
+  return (await planProviderSkillImports(config)).summary;
+}
+
+export function emptyProviderSkillImportSummary(): ProviderSkillImportSummary {
+  return { imported: 0, updated: 0, unchanged: 0, skipped: 0, failed: 0, warnings: [] };
+}
+
+async function planProviderSkillImports(config: AgentHubConfig): Promise<ProviderSkillImportPlan> {
+  const { skills, warnings } = await discoverProviderSkillResults(config);
+  const summary = emptyProviderSkillImportSummary();
+  summary.failed = warnings.length;
+  summary.warnings.push(...warnings);
+  const entries: ProviderSkillImportEntry[] = [];
 
   for (const skill of skills) {
     const targetPath = await targetPathForImportedSkill(config, skill);
     if (!targetPath) {
       summary.skipped += 1;
+      summary.warnings.push(`Skipped ${skill.sourcePath}: a non-AgentHub skill already uses ${skill.slug}.md`);
+      entries.push({ skill, status: "skipped" });
       continue;
     }
 
-    const next = renderImportedSkill(skill);
+    const content = renderImportedSkill(skill);
     const exists = await fs.pathExists(targetPath);
     const previous = exists ? await fs.readFile(targetPath, "utf8") : undefined;
-    if (previous === next) {
-      summary.unchanged += 1;
-      continue;
-    }
-
-    await fs.outputFile(targetPath, next, "utf8");
-    exists ? (summary.updated += 1) : (summary.imported += 1);
+    const status = !exists ? "imported" : previous === content ? "unchanged" : "updated";
+    summary[status] += 1;
+    entries.push({ skill, targetPath, content, status });
   }
 
-  return summary;
+  return { entries, summary };
 }
 
-export async function discoverProviderSkills(config: AgentHubConfig): Promise<DiscoveredSkill[]> {
+async function discoverProviderSkillResults(config: AgentHubConfig): Promise<ProviderSkillReadResults> {
   const roots = await getProviderSkillRootEntries(config);
   const skillPaths = new Map<string, SkillProvider>();
   for (const root of roots) {
@@ -67,12 +137,20 @@ export async function discoverProviderSkills(config: AgentHubConfig): Promise<Di
     }
   }
 
-  const skills = await Promise.all(
-    [...skillPaths.entries()]
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([skillPath, provider]) => readProviderSkill(provider, skillPath))
-  );
-  return skills.filter((skill): skill is DiscoveredSkill => skill !== undefined);
+  const skills: DiscoveredSkill[] = [];
+  const warnings: string[] = [];
+  for (const [skillPath, provider] of [...skillPaths.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+    try {
+      const skill = await readProviderSkill(provider, skillPath);
+      if (skill) {
+        skills.push(skill);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      warnings.push(`Skipped ${skillPath}: ${message}`);
+    }
+  }
+  return { skills, warnings };
 }
 
 export async function getProviderSkillWatchGlobs(config: AgentHubConfig): Promise<string[]> {
@@ -129,7 +207,7 @@ function globalAgentsSkillsRoot(): string {
   return process.env.AGENTHUB_GLOBAL_AGENTS_SKILLS ?? path.join(os.homedir(), ".agents", "skills");
 }
 
-async function findSkillFiles(root: string): Promise<string[]> {
+async function findSkillFiles(root: string, allowLooseMarkdown = true): Promise<string[]> {
   if (!(await fs.pathExists(root))) {
     return [];
   }
@@ -144,15 +222,21 @@ async function findSkillFiles(root: string): Promise<string[]> {
       const skillPath = path.join(entryPath, "SKILL.md");
       if (await fs.pathExists(skillPath)) {
         files.push(skillPath);
+        continue;
       }
-      files.push(...(await findSkillFiles(entryPath)));
+      files.push(...(await findSkillFiles(entryPath, false)));
     } else if (entry.isFile() && entry.name === "SKILL.md") {
       files.push(entryPath);
-    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+    } else if (allowLooseMarkdown && entry.isFile() && isLooseMarkdownSkill(entry.name)) {
       files.push(entryPath);
     }
   }
   return [...new Set(files)];
+}
+
+function isLooseMarkdownSkill(fileName: string): boolean {
+  const lower = fileName.toLowerCase();
+  return lower.endsWith(".md") && !["readme.md", "agents.md", "claude.md"].includes(lower);
 }
 
 async function readProviderSkill(provider: SkillProvider, sourcePath: string): Promise<DiscoveredSkill | undefined> {
@@ -160,6 +244,9 @@ async function readProviderSkill(provider: SkillProvider, sourcePath: string): P
   const { frontmatter, body } = parseFrontmatter(raw);
   const h1 = body.match(/^#\s+(.+)$/m)?.[1]?.trim();
   const slug = slugFromPath(sourcePath);
+  if (!slug) {
+    throw new Error("Skill path does not produce a usable slug");
+  }
   const title = String(frontmatter.name ?? h1 ?? titleFromSlug(slug));
   const description = typeof frontmatter.description === "string" ? frontmatter.description.trim() : undefined;
   return {

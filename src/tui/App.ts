@@ -51,6 +51,7 @@ export async function runTui(): Promise<void> {
   let closeWatcher: (() => Promise<void>) | undefined;
   let refreshTimer: NodeJS.Timeout | undefined;
   let clockTimer: NodeJS.Timeout | undefined;
+  let routedTextKey: string | undefined;
 
   const screen = blessed.screen({
     smartCSR: true,
@@ -92,7 +93,7 @@ export async function runTui(): Promise<void> {
 
   async function handleWatchEvent(event: WatchEvent): Promise<void> {
     const level =
-      event.type === "error" ? "error" : event.type === "sync" ? "success" : "info";
+      event.type === "error" ? "error" : event.type === "warn" ? "warn" : event.type === "sync" ? "success" : "info";
     state = addDashboardEvent(state, event.message, level);
     if (event.type === "sync") {
       state = { ...state, lastSync: new Date().toLocaleTimeString(), status: "watching" };
@@ -112,7 +113,7 @@ export async function runTui(): Promise<void> {
   async function materializeNow(): Promise<void> {
     const config = state.config;
     if (!config) {
-      state = addDashboardEvent(state, "Open Settings before materializing targets", "warn");
+      state = addDashboardEvent(state, "Finish first-run Settings before materializing targets", "warn");
       renderDashboard(screen, widgets, state);
       return;
     }
@@ -123,9 +124,12 @@ export async function runTui(): Promise<void> {
       state = { ...state, status: "watching", lastSync: new Date().toLocaleTimeString() };
       state = addDashboardEvent(
         state,
-        `Sync complete: ${summary.changed} changed, ${summary.unchanged} unchanged, ${summary.backups.length} backups`,
+        `Sync complete: ${summary.changed} changed, ${summary.unchanged} unchanged, ${summary.skillImports.imported + summary.skillImports.updated} skill import changes, ${summary.backups.length} backups`,
         "success"
       );
+      for (const warning of summary.skillImports.warnings.slice(0, 3)) {
+        state = addDashboardEvent(state, warning, "warn");
+      }
       await refreshStatus();
     } catch (error) {
       state = { ...state, status: "error", readinessState: "attention" };
@@ -140,12 +144,12 @@ export async function runTui(): Promise<void> {
 
   async function driftScan(): Promise<void> {
     if (!state.config) {
-      state = addDashboardEvent(state, "Open Settings before scanning", "warn");
+      state = addDashboardEvent(state, "Finish first-run Settings before scanning", "warn");
       renderDashboard(screen, widgets, state);
       return;
     }
     try {
-      const files = await renderAllTargets(state.config);
+      const files = await renderAllTargets(state.config, { previewProviderSkills: true });
       const diffs = await Promise.all(files.map(diffRenderedFile));
       const count = diffs.filter(Boolean).length;
       state = addDashboardEvent(
@@ -242,41 +246,58 @@ export async function runTui(): Promise<void> {
     return state.interactive.mode === "edit";
   }
 
+  function routeTextEditingKey(key: string): boolean {
+    if (!isTextEditing()) return false;
+    routedTextKey = key;
+    handleInteractiveKey(key);
+    return true;
+  }
+
   // Global keybindings
   screen.key(["q", "C-c"], (_ch, key) => {
-    if (key.name === "q" && isTextEditing()) return;
+    if (key.name === "q" && routeTextEditingKey("q")) return;
     void quit();
   });
-  screen.key("p", () => { if (!isTextEditing()) void materializeNow(); });
-  screen.key("d", () => { if (!isTextEditing()) void driftScan(); });
-  screen.key("r", () => { if (!isTextEditing()) void reloadConfig(); });
+  screen.key("p", () => { if (!routeTextEditingKey("p")) void materializeNow(); });
+  screen.key("d", () => { if (!routeTextEditingKey("d")) void driftScan(); });
+  screen.key("r", () => { if (!routeTextEditingKey("r")) void reloadConfig(); });
 
-  screen.key("1", () => { if (!isTextEditing()) switchView("dashboard"); });
-  screen.key("2", () => { if (!isTextEditing()) switchView("skills"); });
-  screen.key("3", () => { if (!isTextEditing()) switchView("memory"); });
-  screen.key("4", () => { if (!isTextEditing()) switchView("workspace"); });
-  screen.key("5", () => { if (!isTextEditing()) switchView("activity"); });
-  screen.key("6", () => { if (!isTextEditing()) switchView("settings"); });
+  screen.key("1", () => { if (!routeTextEditingKey("1")) switchView("dashboard"); });
+  screen.key("2", () => { if (!routeTextEditingKey("2")) switchView("skills"); });
+  screen.key("3", () => { if (!routeTextEditingKey("3")) switchView("memory"); });
+  screen.key("4", () => { if (!routeTextEditingKey("4")) switchView("workspace"); });
+  screen.key("5", () => { if (!routeTextEditingKey("5")) switchView("activity"); });
+  screen.key("6", () => { if (!routeTextEditingKey("6")) switchView("settings"); });
 
   screen.key("left", () => { isTextEditing() ? handleInteractiveKey("left") : navLeft(); });
   screen.key("right", () => { isTextEditing() ? handleInteractiveKey("right") : navRight(); });
 
-  screen.key(["up", "down", "enter", "escape", "space", "backspace"], (ch, key) => {
-    handleInteractiveKey(key.name);
+  screen.key(["up", "down", "enter", "escape", "space", "backspace", "f2", "C-s"], (_ch, key) => {
+    handleInteractiveKey(keyIdentifier(key));
   });
 
   // Capture printable chars for text input in settings
   screen.on("keypress", (ch, key) => {
     if (state.interactive.mode === "edit") {
-      const keyName = key?.name ?? "";
-      if (!["up", "down", "left", "right", "enter", "escape", "space", "backspace", "tab"].includes(keyName)) {
-        handleInteractiveKey(ch ?? keyName, ch);
+      const keyName = keyIdentifier(key ?? {});
+      if (!["up", "down", "left", "right", "enter", "return", "escape", "space", "backspace", "tab", "f2", "C-s"].includes(keyName)) {
+        const textKey = ch ?? keyName;
+        if (!isPrintableKey(textKey)) {
+          routedTextKey = undefined;
+          return;
+        }
+        if (routedTextKey === textKey) {
+          routedTextKey = undefined;
+          return;
+        }
+        handleInteractiveKey(textKey, ch);
       }
     }
   });
 
-  screen.key(["?", "h"], () => {
-    if (isTextEditing()) return;
+  screen.key(["?", "h"], (_ch, key) => {
+    const keyName = key.name === "h" ? "h" : "?";
+    if (routeTextEditingKey(keyName)) return;
     state = { ...state, showHelp: !state.showHelp };
     renderDashboard(screen, widgets, state);
   });
@@ -288,6 +309,16 @@ export async function runTui(): Promise<void> {
   }, 1000);
 
   await refreshStatus("AgentHub online");
+}
+
+function isPrintableKey(key: string): boolean {
+  return key.length === 1 && key >= " " && key !== "\x7f";
+}
+
+function keyIdentifier(key: { name?: string; full?: string; ctrl?: boolean }): string {
+  if (key.full) return key.full;
+  if (key.ctrl && key.name) return `C-${key.name}`;
+  return key.name ?? "";
 }
 
 function createWidgets(screen: blessed.Widgets.Screen): Widgets {
@@ -437,6 +468,7 @@ function renderHelp(widget: blessed.Widgets.BoxElement, state: DashboardState): 
       "",
       "\u2191\u2193  Navigate items (in lists)",
       "Enter  Select / Focus",
+      "F2/Ctrl+S  Save editor",
       "Space  Toggle (in checkboxes)",
       "Esc    Back / Exit edit",
       "",

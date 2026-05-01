@@ -4,7 +4,7 @@ import { diffRenderedFile } from "../../core/diff.js";
 
 export async function diffCommand(): Promise<void> {
   const config = await loadConfig();
-  const rendered = await renderAllTargets(config);
+  const rendered = await renderAllTargets(config, { previewProviderSkills: true });
   let any = false;
 
   for (const file of rendered) {

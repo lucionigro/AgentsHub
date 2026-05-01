@@ -21,7 +21,7 @@ export const claudeAdapter: ProviderAdapter = {
   },
 
   async getDefaultTargets(context: ProviderTargetContext) {
-    const workspaceRoot = context.workspaceRoot ?? defaultWorkspaceRoot;
+    const workspaceRoot = context.workspaceRoot ?? defaultWorkspaceRoot();
     return [
       {
         id: "claude-workspace-instructions",

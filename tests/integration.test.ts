@@ -198,6 +198,117 @@ describe("AgentHub integration", () => {
     expect(claude).toContain("Verify release blockers before publishing.");
   });
 
+  it("generates shared AGENTS when only OpenCode is enabled", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "agenthub-"));
+    const root = path.join(tmp, ".agenthub");
+    const workspace = path.join(tmp, "Repository");
+    await fs.ensureDir(workspace);
+    const config = await createSourceTree({ root, workspaceRoot: workspace, providers: ["opencode"], overwrite: true });
+    config.targets = config.targets.map((target) =>
+      target.scope === "global" ? { ...target, path: path.join(tmp, "opencode.json") } : target
+    );
+
+    await pushConfig(config);
+
+    const opencode = JSON.parse(await fs.readFile(path.join(tmp, "opencode.json"), "utf8")) as { instructions?: string[] };
+    expect(opencode.instructions).toEqual([path.join(workspace, "AGENTS.md")]);
+    expect(await fs.pathExists(path.join(workspace, "AGENTS.md"))).toBe(true);
+    expect(await fs.readFile(path.join(workspace, "AGENTS.md"), "utf8")).toContain("# AGENTS.md");
+  });
+
+  it("uses the Codex AGENTS target when Codex and OpenCode are both enabled", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "agenthub-"));
+    const root = path.join(tmp, ".agenthub");
+    const workspace = path.join(tmp, "Repository");
+    await fs.ensureDir(workspace);
+    const config = await createSourceTree({ root, workspaceRoot: workspace, providers: ["codex", "opencode"], overwrite: true });
+
+    expect(config.targets.some((target) => target.id === "codex-workspace-agents")).toBe(true);
+    expect(config.targets.some((target) => target.id === "opencode-workspace-agents")).toBe(false);
+  });
+
+  it("previews external provider skills in status and diff before mutating the AgentHub skills dir", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "agenthub-"));
+    const root = path.join(tmp, ".agenthub");
+    const workspace = path.join(tmp, "Repository");
+    await fs.ensureDir(workspace);
+    const config = await createSourceTree({ root, workspaceRoot: workspace, providers: ["codex"], overwrite: true });
+    config.targets = config.targets.map((target) =>
+      target.scope === "global" ? { ...target, path: path.join(tmp, "global.toml") } : target
+    );
+    await pushConfig(config);
+
+    await fs.outputFile(
+      path.join(workspace, ".codex", "skills", "new-live", "SKILL.md"),
+      [
+        "---",
+        "name: New Live Skill",
+        "---",
+        "# New Live Skill",
+        "",
+        "This should appear before import persistence.",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const statuses = await getStatus(config);
+    const rendered = await renderAllTargets(config, { previewProviderSkills: true });
+    const diffs = await Promise.all(rendered.map(diffRenderedFile));
+
+    expect(statuses.find((status) => status.id === "codex-workspace-agents")?.synced).toBe(false);
+    expect(diffs.join("\n")).toContain("New Live Skill");
+    expect(await fs.pathExists(path.join(root, "skills", "new-live.md"))).toBe(false);
+  });
+
+  it("skips malformed provider skill frontmatter without blocking sync", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "agenthub-"));
+    const root = path.join(tmp, ".agenthub");
+    const workspace = path.join(tmp, "Repository");
+    const globalAgentsSkills = path.join(tmp, ".agents", "skills");
+    const previous = process.env.AGENTHUB_GLOBAL_AGENTS_SKILLS;
+    process.env.AGENTHUB_GLOBAL_AGENTS_SKILLS = globalAgentsSkills;
+
+    try {
+      await fs.ensureDir(workspace);
+      await fs.outputFile(path.join(globalAgentsSkills, "bad", "SKILL.md"), "---\nname: [bad\n---\n# Bad\n\nBody\n", "utf8");
+      const config = await createSourceTree({ root, workspaceRoot: workspace, providers: ["codex"], overwrite: true });
+      config.targets = config.targets.map((target) =>
+        target.scope === "global" ? { ...target, path: path.join(tmp, "global.toml") } : target
+      );
+
+      const summary = await pushConfig(config);
+
+      expect(summary.skillImports.failed).toBeGreaterThanOrEqual(1);
+      expect(summary.skillImports.warnings.join("\n")).toContain("bad");
+      expect(await fs.pathExists(path.join(workspace, "AGENTS.md"))).toBe(true);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AGENTHUB_GLOBAL_AGENTS_SKILLS;
+      } else {
+        process.env.AGENTHUB_GLOBAL_AGENTS_SKILLS = previous;
+      }
+    }
+  });
+
+  it("does not import README files inside SKILL.md packages", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "agenthub-"));
+    const root = path.join(tmp, ".agenthub");
+    const workspace = path.join(tmp, "Repository");
+    await fs.ensureDir(workspace);
+    await fs.outputFile(path.join(workspace, ".codex", "skills", "release", "SKILL.md"), "# Release Skill\n\nDo release work.\n", "utf8");
+    await fs.outputFile(path.join(workspace, ".codex", "skills", "release", "README.md"), "# Internal README\n\nNot a skill.\n", "utf8");
+    const config = await createSourceTree({ root, workspaceRoot: workspace, providers: ["codex"], overwrite: true });
+    config.targets = config.targets.map((target) =>
+      target.scope === "global" ? { ...target, path: path.join(tmp, "global.toml") } : target
+    );
+
+    await pushConfig(config);
+
+    expect(await fs.pathExists(path.join(root, "skills", "release.md"))).toBe(true);
+    expect(await fs.pathExists(path.join(root, "skills", "readme.md"))).toBe(false);
+  });
+
   it("imports global agents skills used by OpenCode and propagates them into Codex", async () => {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "agenthub-"));
     const root = path.join(tmp, ".agenthub");

@@ -21,6 +21,8 @@ describe("dashboard state", () => {
     expect(state.initialized).toBe(false);
     expect(state.status).toBe("not initialized");
     expect(state.readinessState).toBe("attention");
+    expect(state.currentView).toBe("settings");
+    expect(state.primaryAction).toBe("Complete guided Settings setup");
   });
 
   it("builds dashboard summaries from config", async () => {

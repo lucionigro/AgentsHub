@@ -5,7 +5,7 @@ import { pushConfig } from "./sync.js";
 import { getProviderSkillWatchGlobs } from "./providerSkills.js";
 
 export type WatchEvent = {
-  type: "change" | "sync" | "error";
+  type: "change" | "sync" | "warn" | "error";
   message: string;
 };
 
@@ -33,10 +33,14 @@ export function watchConfig(config: AgentHubConfig, onEvent: (event: WatchEvent)
     timer = setTimeout(() => {
       void pushConfig(config)
         .then((summary) => {
+          const skillChanges = summary.skillImports.imported + summary.skillImports.updated;
           onEvent({
             type: "sync",
-            message: `sync complete: ${summary.changed} changed, ${summary.unchanged} unchanged`
+            message: `sync complete: ${summary.changed} changed, ${summary.unchanged} unchanged, ${skillChanges} skill import changes`
           });
+          for (const warning of summary.skillImports.warnings.slice(0, 3)) {
+            onEvent({ type: "warn", message: warning });
+          }
         })
         .catch((error: unknown) => {
           onEvent({ type: "error", message: error instanceof Error ? error.message : String(error) });

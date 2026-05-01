@@ -3,7 +3,7 @@ import type { AgentHubConfig } from "../config/schema.js";
 import { resolvePath } from "../config/paths.js";
 import { renderAllTargets } from "./renderer.js";
 import { writeRenderedFile, prepareNextContent } from "./fileWriter.js";
-import { syncProviderSkills } from "./providerSkills.js";
+import { syncProviderSkills, type ProviderSkillImportSummary } from "./providerSkills.js";
 
 export type TargetStatus = {
   id: string;
@@ -22,13 +22,14 @@ export type SyncSummary = {
   unchanged: number;
   skipped: number;
   backups: string[];
+  skillImports: ProviderSkillImportSummary;
 };
 
 export async function pushConfig(config: AgentHubConfig): Promise<SyncSummary> {
-  await syncProviderSkills(config);
+  const skillImports = await syncProviderSkills(config);
   const rendered = await renderAllTargets(config);
   const timestamp = new Date().toISOString().replaceAll(":", "").replaceAll(".", "");
-  const summary: SyncSummary = { changed: 0, unchanged: 0, skipped: 0, backups: [] };
+  const summary: SyncSummary = { changed: 0, unchanged: 0, skipped: 0, backups: [], skillImports };
 
   for (const file of rendered) {
     const result = await writeRenderedFile(file, `${config.source.root}/backups`, timestamp);
@@ -43,7 +44,7 @@ export async function pushConfig(config: AgentHubConfig): Promise<SyncSummary> {
 
 export async function getStatus(config: AgentHubConfig): Promise<TargetStatus[]> {
   const statuses: TargetStatus[] = [];
-  const rendered = await renderAllTargets(config);
+  const rendered = await renderAllTargets(config, { previewProviderSkills: true });
 
   for (const target of config.targets) {
     if (!config.providers[target.provider]?.enabled) {

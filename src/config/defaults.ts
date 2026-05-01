@@ -15,11 +15,13 @@ export type InitOptions = {
   overwrite?: boolean;
 };
 
-const memoryFiles: Record<string, string> = {
-  "global.md": `# Global Memory
+export const defaultGlobalMemoryContent = `# Global Memory
 
 Shared guidance that every coding agent should load.
-`,
+`;
+
+const memoryFiles: Record<string, string> = {
+  "global.md": defaultGlobalMemoryContent,
   "coding-style.md": `# Coding Style
 
 - Prefer clear, typed, maintainable code.
@@ -80,7 +82,7 @@ const templateFiles: Record<string, string> = {
   "opencode/config.json.hbs": `{{content}}`
 };
 
-export function createDefaultMcpConfig(workspaceRoot = defaultWorkspaceRoot): McpConfig {
+export function createDefaultMcpConfig(workspaceRoot = defaultWorkspaceRoot()): McpConfig {
   return {
     servers: {
       filesystem: {
@@ -112,7 +114,7 @@ export function createDefaultMcpConfig(workspaceRoot = defaultWorkspaceRoot): Mc
 
 export async function createSourceTree(options: InitOptions): Promise<AgentHubConfig> {
   const root = resolvePath(options.root);
-  const workspaceRoot = options.workspaceRoot ?? defaultWorkspaceRoot;
+  const workspaceRoot = options.workspaceRoot ?? defaultWorkspaceRoot();
   const providers = options.providers ?? ["claude", "codex", "opencode"];
   const defaultWriteMode = options.defaultWriteMode ?? "managed";
 

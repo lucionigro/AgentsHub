@@ -11,14 +11,18 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/index.js",
     "dev": "tsx src/index.ts",
+    "prepack": "pnpm build",
     "setup:global": "pnpm build && npm link",
     "remove:global": "npm unlink -g agenthub",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@iarna/toml": "^2.2.5",
     "chokidar": "^5.0.0",

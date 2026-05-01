@@ -6,7 +6,13 @@ The source of truth lives in `~/.agenthub`. AgentHub renders that source into fi
 
 ## Installation
 
+Prerequisites:
+
+- Node.js 20 or newer.
+- pnpm 10.33.2, preferably through Corepack.
+
 ```bash
+corepack enable
 pnpm install
 pnpm setup:global
 ```
@@ -25,25 +31,36 @@ pnpm remove:global
 agenthub
 ```
 
-`agenthub` opens the live terminal app. On first run, open Settings to create the AgentHub config, source folders, workspace targets, and MCP defaults. Leave that terminal open to see folders, memory, skills, MCPs, generated outputs, and auto-sync events.
+`agenthub` opens the live terminal app. On first run, AgentHub starts in a guided Settings flow to create the config, source folders, workspace targets, and MCP defaults. Leave that terminal open to see folders, memory, skills, MCPs, generated outputs, and auto-sync events.
 
 Example workflow:
 
 1. Run `agenthub`.
-2. Open Settings and save the workspace/config defaults.
-3. Edit `~/.agenthub/memory/global.md`.
-4. AgentHub renders `/Users/lucionigro/Repository/CLAUDE.md`.
-5. AgentHub renders `/Users/lucionigro/Repository/AGENTS.md`.
+2. Complete the guided first-run Settings flow and use `Save & Sync`.
+3. Open `Settings` -> `Global Memory`, edit the shared Markdown memory, and save with `F2` or `Ctrl+S`.
+4. AgentHub renders `<workspace>/CLAUDE.md`.
+5. AgentHub renders `<workspace>/AGENTS.md`.
 6. Claude Code, Codex, and OpenCode share the same memory.
+
+The Global Memory editor writes the same canonical file at `~/.agenthub/memory/global.md`, so direct file edits still work for scripted or external workflows.
+
+The default workspace is portable: AgentHub uses `AGENTHUB_WORKSPACE` when set, otherwise the current directory where the app starts. You can edit the workspace before saving in Settings.
 
 ## Provider-Created Skills
 
-AgentHub can also import skills created from a provider app. For Claude Code, it watches and imports:
+AgentHub can also import skills created from a provider app. It watches and imports:
 
 - `~/.claude/skills/<skill>/SKILL.md`
+- `~/.codex/skills/<skill>/SKILL.md`
+- `~/.config/opencode/skills/<skill>/SKILL.md`
+- `~/.agents/skills/<skill>/SKILL.md`
 - `<workspace>/.claude/skills/<skill>/SKILL.md`
+- `<workspace>/.codex/skills/<skill>/SKILL.md`
+- `<workspace>/.opencode/skills/<skill>/SKILL.md`
 
-When the dashboard is running, a new Claude Code skill is copied into `~/.agenthub/skills`, cleaned of provider-only frontmatter/markers, and then rendered into the configured instruction targets such as `/Users/lucionigro/Repository/AGENTS.md`.
+When the dashboard is running, a new provider skill is copied into `~/.agenthub/skills`, cleaned of provider-only frontmatter/markers, and then rendered into configured instruction targets such as `<workspace>/AGENTS.md`. `agenthub status` and `agenthub diff` preview external skills before writing them, so drift is visible before `push`.
+
+Malformed provider skill frontmatter is skipped with a warning instead of blocking the whole sync. Package README files inside a `SKILL.md` directory are ignored.
 
 Manual path:
 
@@ -62,7 +79,7 @@ The app shows:
 - `Dashboard`: readiness, workspace/source paths, synced outputs, memory, skills, and recent activity.
 - `Skills` and `Base Memory`: every Markdown source file AgentHub renders into provider instructions.
 - `Workspace`: generated files such as `CLAUDE.md`, `AGENTS.md`, Codex TOML, and OpenCode JSON.
-- `Settings`: workspace, providers, instruction write mode, source paths, and MCP server toggles.
+- `Settings`: workspace, providers, instruction write mode, source paths, MCP server toggles, Global Memory, and Save & Sync.
 - `Recent Activity`: sync, import, reload, backup, and error activity.
 
 Readiness states:
@@ -84,6 +101,7 @@ Shortcuts:
 - `p`: sync/import now
 - `d`: drift scan
 - `r`: reload config
+- `F2` / `Ctrl+S`: save the Global Memory editor
 - `?`: help
 
 CLI commands remain available for scripting:
@@ -108,7 +126,7 @@ source:
   mcpFile: "~/.agenthub/mcp/servers.yml"
 workspaces:
   - name: main
-    path: "/Users/lucionigro/Repository"
+    path: "/path/to/your/workspace"
     mode: workspace-root
 providers:
   claude:
@@ -123,7 +141,7 @@ targets:
     type: instructions
     scope: workspace
     workspace: main
-    path: "/Users/lucionigro/Repository/CLAUDE.md"
+    path: "/path/to/your/workspace/CLAUDE.md"
     writeMode: managed
     includes:
       - memory/global.md
@@ -156,11 +174,11 @@ Before overwriting an existing target, AgentHub creates a timestamped backup und
 
 - Claude Code: workspace/project `CLAUDE.md`.
 - Codex: global/workspace/project `AGENTS.md` and `~/.codex/config.toml` MCP config.
-- OpenCode: `opencode.json` with `instructions` and `mcp`.
+- OpenCode: `opencode.json` with `instructions` pointing at the shared `<workspace>/AGENTS.md`, plus `mcp`.
 
 ## Roadmap
 
 - Conflict resolution.
-- Additional provider-specific skill importers.
+- Additional provider-specific config surfaces.
 - Cloud sync.
 - Desktop GUI.
