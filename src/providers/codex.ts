@@ -28,7 +28,7 @@ export const codexAdapter: ProviderAdapter = {
   },
 
   async getDefaultTargets(context: ProviderTargetContext) {
-    const workspaceRoot = context.workspaceRoot ?? defaultWorkspaceRoot;
+    const workspaceRoot = context.workspaceRoot ?? defaultWorkspaceRoot();
     return [
       {
         id: "codex-workspace-agents",

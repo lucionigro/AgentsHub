@@ -32,7 +32,7 @@ export function defaultRootForConfigPath(configPath: string): string {
 export async function saveSettingsConfig(input: SettingsConfigInput): Promise<AgentHubConfig> {
   const configPath = resolvePath(input.configPath);
   const root = resolvePath(input.root ?? input.config?.source.root ?? defaultRootForConfigPath(configPath));
-  const workspaceRoot = resolvePath(input.workspaceRoot ?? input.config?.workspaces[0]?.path ?? defaultWorkspaceRoot);
+  const workspaceRoot = resolvePath(input.workspaceRoot ?? input.config?.workspaces[0]?.path ?? defaultWorkspaceRoot());
   const writeMode = input.instructionWriteMode ?? firstInstructionWriteMode(input.config) ?? "managed";
 
   const baseConfig = input.config
@@ -61,6 +61,7 @@ export async function saveSettingsConfig(input: SettingsConfigInput): Promise<Ag
   };
 
   updated = await ensureDefaultTargets(updated, workspaceRoot, writeMode);
+  updated = reconcileSharedAgentsTarget(updated, workspaceRoot, writeMode);
   updated = {
     ...updated,
     targets: updated.targets.map((target) => {
@@ -83,7 +84,7 @@ export async function saveSettingsConfig(input: SettingsConfigInput): Promise<Ag
   return updated;
 }
 
-export async function loadEditableMcpConfig(config: AgentHubConfig, workspaceRoot = config.workspaces[0]?.path ?? defaultWorkspaceRoot): Promise<McpConfig> {
+export async function loadEditableMcpConfig(config: AgentHubConfig, workspaceRoot = config.workspaces[0]?.path ?? defaultWorkspaceRoot()): Promise<McpConfig> {
   return loadOrDefaultMcp(config, workspaceRoot);
 }
 
@@ -154,10 +155,40 @@ function defaultTargetPath(targetId: string, workspaceRoot: string): string | un
     case "claude-workspace-instructions":
       return path.join(workspaceRoot, "CLAUDE.md");
     case "codex-workspace-agents":
+    case "opencode-workspace-agents":
       return path.join(workspaceRoot, "AGENTS.md");
     default:
       return undefined;
   }
+}
+
+function reconcileSharedAgentsTarget(
+  config: AgentHubConfig,
+  workspaceRoot: string,
+  writeMode: WriteMode
+): AgentHubConfig {
+  const hasCodex = config.providers.codex.enabled;
+  const hasOpenCode = config.providers.opencode.enabled;
+  let targets = config.targets.filter((target) => !(hasCodex && target.id === "opencode-workspace-agents"));
+
+  if (!hasCodex && hasOpenCode && !targets.some((target) => target.id === "opencode-workspace-agents")) {
+    targets.push({
+      id: "opencode-workspace-agents",
+      provider: "opencode",
+      type: "instructions",
+      scope: "workspace",
+      workspace: "main",
+      path: path.join(workspaceRoot, "AGENTS.md"),
+      writeMode,
+      includes: ["memory/global.md", "memory/coding-style.md", "memory/workflow.md", "skills/backend.md"]
+    });
+  }
+
+  targets = targets.map((target) =>
+    target.id === "opencode-workspace-agents" ? { ...target, path: path.join(workspaceRoot, "AGENTS.md"), writeMode } : target
+  );
+
+  return { ...config, targets };
 }
 
 async function ensureSourceDirs(config: AgentHubConfig): Promise<void> {

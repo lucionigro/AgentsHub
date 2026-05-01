@@ -1,6 +1,7 @@
 import fs from "fs-extra";
 import Handlebars from "handlebars";
 import { defaultWorkspaceRoot } from "../config/paths.js";
+import type { TargetDefinition } from "../config/schema.js";
 import { renderOpenCodeMcpObject } from "./mcp.js";
 import type {
   McpRenderContext,
@@ -10,7 +11,7 @@ import type {
   RenderedFile
 } from "./types.js";
 
-const instructionsTemplate = `# OpenCode Instructions
+const instructionsTemplate = `# AGENTS.md
 
 {{#each sections}}
 ## {{title}}
@@ -28,7 +29,23 @@ export const opencodeAdapter: ProviderAdapter = {
   },
 
   async getDefaultTargets(context: ProviderTargetContext) {
-    return [
+    const workspaceRoot = context.workspaceRoot ?? defaultWorkspaceRoot();
+    const targetDefinitions: TargetDefinition[] = [];
+
+    if (!context.config.providers.codex.enabled) {
+      targetDefinitions.push({
+        id: "opencode-workspace-agents",
+        provider: "opencode" as const,
+        type: "instructions" as const,
+        scope: "workspace" as const,
+        workspace: "main",
+        path: `${workspaceRoot}/AGENTS.md`,
+        writeMode: context.defaultWriteMode,
+        includes: ["memory/global.md", "memory/coding-style.md", "memory/workflow.md", "skills/backend.md"]
+      });
+    }
+
+    targetDefinitions.push(
       {
         id: "opencode-global-config",
         provider: "opencode",
@@ -38,7 +55,8 @@ export const opencodeAdapter: ProviderAdapter = {
         writeMode: "append-block",
         includes: []
       }
-    ];
+    );
+    return targetDefinitions;
   },
 
   async renderInstructions(context: RenderContext): Promise<RenderedFile[]> {
@@ -55,7 +73,7 @@ export const opencodeAdapter: ProviderAdapter = {
 
   async renderMcp(context: McpRenderContext): Promise<RenderedFile[]> {
     const workspace = context.config.workspaces.find((entry) => entry.name === "main");
-    const workspaceRoot = workspace?.path ?? defaultWorkspaceRoot;
+    const workspaceRoot = workspace?.path ?? defaultWorkspaceRoot();
     const content = JSON.stringify(
       {
         $schema: "https://opencode.ai/config.json",

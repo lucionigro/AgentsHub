@@ -2,7 +2,10 @@ import os from "node:os";
 import path from "node:path";
 
 export const defaultAgentHubRoot = "~/.agenthub";
-export const defaultWorkspaceRoot = "/Users/lucionigro/Repository";
+
+export function defaultWorkspaceRoot(): string {
+  return resolvePath(process.env.AGENTHUB_WORKSPACE ?? process.cwd());
+}
 
 export function expandHome(input: string): string {
   if (input === "~") {

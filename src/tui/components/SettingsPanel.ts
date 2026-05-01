@@ -1,12 +1,16 @@
 import type { Widgets } from "neo-blessed";
 import blessed from "neo-blessed";
+import fs from "fs-extra";
 import path from "node:path";
-import { defaultWorkspaceRoot } from "../../config/paths.js";
+import { defaultGlobalMemoryContent } from "../../config/defaults.js";
+import { defaultWorkspaceRoot, resolvePath } from "../../config/paths.js";
 import { defaultRootForConfigPath, saveSettingsConfig, settingsProviderIds } from "../../config/settings.js";
 import type { ProviderId, WriteMode } from "../../config/schema.js";
+import { pushConfig } from "../../core/sync.js";
 import { palette } from "../theme/palette.js";
 import { hex, hexBg } from "../theme/styles.js";
 import { addDashboardEvent, type DashboardState, type InteractiveState, type SettingsDraft, type SettingsTextField } from "../state.js";
+import { cursorLineAndColumn, editMultilineContent } from "./globalMemoryEditor.js";
 import {
   boxedLines,
   fitText,
@@ -22,6 +26,8 @@ const MENU_ITEMS = [
   "Write Mode",
   "Source Paths",
   "MCP Servers",
+  "Global Memory",
+  "Save & Sync",
 ] as const;
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
@@ -31,6 +37,9 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
 };
 
 const WRITE_MODES: WriteMode[] = ["managed", "append-block"];
+const GLOBAL_MEMORY_SECTION = 5;
+const SAVE_SYNC_SECTION = 6;
+const GLOBAL_MEMORY_FILE = "global.md";
 
 type SettingsResult = {
   interactive: InteractiveState;
@@ -92,7 +101,7 @@ function renderSettingsMenu(
   const menuContent: string[] = [
     state.initialized
       ? hex("Select a section to configure.", palette.gray)
-      : hex("First run: Settings will create AgentHub config and source files.", palette.yellow),
+      : hex("First run: review each setup step, then Save & Sync to materialize provider files.", palette.yellow),
     "",
   ];
 
@@ -176,11 +185,89 @@ function renderSettingsSection(
     }
     content.push("");
     content.push(activeRow(`${statusBadge("SAVE")} ${hex("Save MCP settings", palette.white)}`, width, interactive.scrollOffset === mcpSaveRow(state)));
+  } else if (section === GLOBAL_MEMORY_SECTION) {
+    renderGlobalMemorySection(content, width, interactive, draft);
+  } else if (section === SAVE_SYNC_SECTION) {
+    content.push(hex("Review the first-run setup and materialize provider outputs in one step.", palette.gray), "");
+    content.push(keyValueLine("Workspace", fitText(draft.workspaceRoot, width - 20), width - 4));
+    content.push(keyValueLine("Source", fitText(draft.root, width - 20), width - 4));
+    content.push(keyValueLine("Write Mode", draft.writeMode, width - 4));
+    content.push(keyValueLine("Providers", enabledProvidersLabel(draft), width - 4));
+    content.push("");
+    content.push(activeRow(`${statusBadge("SYNC")} ${hex("Save settings and sync outputs", palette.white)}`, width, interactive.scrollOffset === 0));
   }
 
   content.push("");
-  content.push(hex("↑↓ navigate  Enter edit/save  Space toggle/select  Esc back", palette.gray));
+  content.push(hex(section === GLOBAL_MEMORY_SECTION && interactive.mode === "edit"
+    ? "Enter newline  F2/Ctrl+S save  Esc cancel"
+    : "↑↓ navigate  Enter edit/save  Space toggle/select  Esc back", palette.gray));
   lines.push(...boxedLines(MENU_ITEMS[section] ?? "Settings", width, content));
+}
+
+function renderGlobalMemorySection(
+  content: string[],
+  width: number,
+  interactive: InteractiveState,
+  draft: SettingsDraft
+): void {
+  const filePath = globalMemoryPath(draft);
+  content.push(hex("Edit the Markdown memory rendered into every provider instruction target.", palette.gray), "");
+  content.push(keyValueLine("File", fitText(filePath, width - 20), width - 4));
+
+  if (interactive.mode === "edit" && draft.editingField === "globalMemory") {
+    content.push("");
+    content.push(...renderGlobalMemoryEditor(interactive.inputBuffer, interactive.scrollOffset, width));
+    return;
+  }
+
+  const preview = draft.globalMemoryContent?.split("\n").slice(0, 6) ?? [];
+  if (preview.length > 0) {
+    content.push("", hex("Preview", palette.gray));
+    for (const line of preview) {
+      content.push(hex(fitText(line || " ", width - 8), palette.whiteDim));
+    }
+  } else {
+    content.push("", hex("Enter opens the current global.md content, or the starter template on first run.", palette.whiteDim));
+  }
+
+  content.push("");
+  content.push(activeRow(`${statusBadge("EDIT")} ${hex("Edit global memory", palette.white)}`, width, interactive.scrollOffset === 0));
+}
+
+function renderGlobalMemoryEditor(content: string, cursor: number, width: number): string[] {
+  const lines = content.split("\n");
+  const { line: cursorLine, column } = cursorLineAndColumn(content, cursor);
+  const visibleRows = 10;
+  const start = Math.max(0, cursorLine - visibleRows + 1);
+  const end = Math.min(lines.length, start + visibleRows);
+  const lineNoWidth = Math.max(3, String(lines.length).length);
+  const textWidth = Math.max(8, width - lineNoWidth - 8);
+  const rendered: string[] = [];
+
+  for (let i = start; i < end; i++) {
+    const prefix = `${String(i + 1).padStart(lineNoWidth)} `;
+    const line = i === cursorLine
+      ? lineWithCursor(lines[i] ?? "", column, textWidth)
+      : hex(fitText(lines[i] || " ", textWidth), palette.whiteDim);
+    rendered.push(`${hex(prefix, palette.gray)}${line}`);
+  }
+
+  if (lines.length > visibleRows) {
+    rendered.push(hex(`${cursorLine + 1}/${lines.length} lines`, palette.gray));
+  }
+
+  return rendered;
+}
+
+function lineWithCursor(line: string, column: number, width: number): string {
+  const safeColumn = Math.max(0, Math.min(column, line.length));
+  const windowStart = safeColumn >= width ? safeColumn - width + 1 : 0;
+  const visible = line.slice(windowStart, windowStart + width);
+  const localColumn = safeColumn - windowStart;
+  const before = visible.slice(0, localColumn);
+  const at = visible[localColumn] ?? " ";
+  const after = visible.slice(localColumn + 1);
+  return `${hex(before, palette.white)}${hexBg(at, palette.cyan, palette.bg)}${hex(after, palette.whiteDim)}`;
 }
 
 function renderTextField(
@@ -218,6 +305,9 @@ export async function handleSettingsKeys(
   const draft = interactive.settingsDraft ?? createSettingsDraft(state);
 
   if (interactive.mode === "edit") {
+    if (draft.editingField === "globalMemory") {
+      return handleGlobalMemoryEdit(key, state, interactive, draft);
+    }
     return handleTextEdit(key, state, interactive, draft);
   }
 
@@ -316,6 +406,14 @@ async function handleSettingsFocus(
     }
   }
 
+  if (section === GLOBAL_MEMORY_SECTION && key === "enter") {
+    return startGlobalMemoryEdit(state, interactive, draft);
+  }
+
+  if (section === SAVE_SYNC_SECTION && key === "enter") {
+    return saveDraft(state, interactive, draft, undefined, true);
+  }
+
   return null;
 }
 
@@ -326,7 +424,7 @@ function handleTextEdit(
   draft: SettingsDraft
 ): SettingsResult | null {
   const field = draft.editingField;
-  if (!field) {
+  if (!field || field === "globalMemory") {
     return { interactive: { ...interactive, mode: "focus", settingsDraft: draft }, state };
   }
 
@@ -375,7 +473,7 @@ function handleTextEdit(
     return { interactive: { ...interactive, scrollOffset: Math.min(interactive.inputBuffer.length, interactive.scrollOffset + 1), settingsDraft: draft }, state };
   }
 
-  const char = key === "space" ? " " : key.length === 1 ? key : "";
+  const char = key === "space" ? " " : isPrintableTextKey(key) ? key : "";
   if (char) {
     const cursor = interactive.scrollOffset;
     return {
@@ -390,6 +488,116 @@ function handleTextEdit(
   }
 
   return null;
+}
+
+async function startGlobalMemoryEdit(
+  state: DashboardState,
+  interactive: InteractiveState,
+  draft: SettingsDraft
+): Promise<SettingsResult> {
+  const content = await loadGlobalMemoryContent(draft);
+  return {
+    interactive: {
+      ...interactive,
+      mode: "edit",
+      inputBuffer: content,
+      scrollOffset: content.length,
+      settingsDraft: { ...draft, globalMemoryContent: content, editingField: "globalMemory" },
+    },
+    state,
+  };
+}
+
+async function handleGlobalMemoryEdit(
+  key: string,
+  state: DashboardState,
+  interactive: InteractiveState,
+  draft: SettingsDraft
+): Promise<SettingsResult | null> {
+  if (key === "escape") {
+    return {
+      interactive: {
+        ...interactive,
+        mode: "focus",
+        inputBuffer: "",
+        scrollOffset: 0,
+        settingsDraft: { ...draft, editingField: undefined },
+      },
+      state,
+    };
+  }
+
+  if (key === "f2" || key === "C-s") {
+    return saveGlobalMemoryDraft(state, interactive, draft);
+  }
+
+  const edit = editMultilineContent(interactive.inputBuffer, interactive.scrollOffset, key);
+  return {
+    interactive: {
+      ...interactive,
+      inputBuffer: edit.content,
+      scrollOffset: edit.cursor,
+      settingsDraft: { ...draft, globalMemoryContent: edit.content, editingField: "globalMemory" },
+    },
+    state,
+  };
+}
+
+async function saveGlobalMemoryDraft(
+  state: DashboardState,
+  interactive: InteractiveState,
+  draft: SettingsDraft
+): Promise<SettingsResult> {
+  try {
+    const config = await saveSettingsConfig({
+      config: state.config,
+      configPath: state.configPath,
+      root: draft.root,
+      memoryDir: draft.memoryDir,
+      skillsDir: draft.skillsDir,
+      mcpFile: draft.mcpFile,
+      workspaceRoot: draft.workspaceRoot,
+      providerEnabled: draft.providers,
+      instructionWriteMode: draft.writeMode,
+    });
+    const content = interactive.inputBuffer.endsWith("\n") ? interactive.inputBuffer : `${interactive.inputBuffer}\n`;
+    await fs.outputFile(path.join(resolvePath(config.source.memoryDir), GLOBAL_MEMORY_FILE), content, "utf8");
+    const savedState = addDashboardEvent(
+      { ...state, config, initialized: true, status: "watching" },
+      "Global Memory saved",
+      "success"
+    );
+
+    return {
+      interactive: {
+        ...interactive,
+        mode: "focus",
+        inputBuffer: "",
+        scrollOffset: 0,
+        settingsDraft: { ...draft, globalMemoryContent: content, editingField: undefined },
+      },
+      state: savedState,
+      reload: true,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      interactive: { ...interactive, mode: "edit", settingsDraft: draft },
+      state: addDashboardEvent(state, `Global Memory save failed: ${message}`, "error"),
+    };
+  }
+}
+
+async function loadGlobalMemoryContent(draft: SettingsDraft): Promise<string> {
+  const filePath = globalMemoryPath(draft);
+  if (!(await fs.pathExists(filePath))) {
+    return defaultGlobalMemoryContent;
+  }
+  return fs.readFile(filePath, "utf8");
+}
+
+function isPrintableTextKey(key: string): boolean {
+  return key.length === 1 && key >= " " && key !== "\x7f";
 }
 
 function startTextEdit(
@@ -415,7 +623,8 @@ async function saveDraft(
   state: DashboardState,
   interactive: InteractiveState,
   draft: SettingsDraft,
-  mcpServerEnabled?: Record<string, boolean>
+  mcpServerEnabled?: Record<string, boolean>,
+  syncAfter = false
 ): Promise<SettingsResult> {
   try {
     const config = await saveSettingsConfig({
@@ -430,7 +639,18 @@ async function saveDraft(
       instructionWriteMode: draft.writeMode,
       mcpServerEnabled,
     });
-    const savedState = addDashboardEvent({ ...state, config, initialized: true, status: "watching" }, "Settings saved", "success");
+    let savedState = addDashboardEvent({ ...state, config, initialized: true, status: syncAfter ? "syncing" : "watching" }, "Settings saved", "success");
+    if (syncAfter) {
+      const summary = await pushConfig(config);
+      savedState = addDashboardEvent(
+        { ...savedState, status: "watching" },
+        `Sync complete: ${summary.changed} changed, ${summary.unchanged} unchanged, ${summary.skillImports.imported + summary.skillImports.updated} skill import changes`,
+        "success"
+      );
+      for (const warning of summary.skillImports.warnings.slice(0, 3)) {
+        savedState = addDashboardEvent(savedState, warning, "warn");
+      }
+    }
     return {
       interactive: { ...interactive, mode: "browse", scrollOffset: 0, inputBuffer: "", settingsDraft: undefined },
       state: savedState,
@@ -447,7 +667,7 @@ async function saveDraft(
 
 function createSettingsDraft(state: DashboardState): SettingsDraft {
   const root = state.config?.source.root ?? defaultRootForConfigPath(state.configPath);
-  const workspaceRoot = state.config?.workspaces.find((workspace) => workspace.name === "main")?.path ?? defaultWorkspaceRoot;
+  const workspaceRoot = state.config?.workspaces.find((workspace) => workspace.name === "main")?.path ?? defaultWorkspaceRoot();
   return {
     workspaceRoot,
     root,
@@ -475,6 +695,9 @@ function maxSectionRow(section: number, state: DashboardState): number {
       return 4;
     case 4:
       return mcpSaveRow(state);
+    case GLOBAL_MEMORY_SECTION:
+    case SAVE_SYNC_SECTION:
+      return 0;
     default:
       return 0;
   }
@@ -491,4 +714,13 @@ function rowForField(section: number, field: SettingsTextField): number {
     return Math.max(0, fields.indexOf(field));
   }
   return 0;
+}
+
+function enabledProvidersLabel(draft: SettingsDraft): string {
+  const enabled = settingsProviderIds.filter((provider) => draft.providers[provider]).map((provider) => PROVIDER_LABELS[provider]);
+  return enabled.length > 0 ? enabled.join(", ") : "None";
+}
+
+function globalMemoryPath(draft: SettingsDraft): string {
+  return path.join(resolvePath(draft.memoryDir), GLOBAL_MEMORY_FILE);
 }
